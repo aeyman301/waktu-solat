@@ -5,6 +5,25 @@ plays `azan.mp3` automatically when each prayer time arrives.
 
 No build step, no dependencies — open `index.html` or serve the folder.
 
+## Intended use
+
+**This is built for automated announcer and PA systems** — factories,
+warehouses, plants, offices, surau facilities and similar sites where a machine
+drives the loudspeakers on a fixed schedule and nobody is watching a screen.
+
+It is not a personal prayer-times app, and it is not a substitute for a muazzin.
+The design follows from that:
+
+- It is meant to run unattended on a dedicated machine, browser tab open, audio
+  output wired into the PA amplifier.
+- Playback is deliberately blunt: the clip starts at the prayer time, at a fixed
+  volume, on a fixed set of prayers. There is no fade, no ducking, and no
+  interaction with anything else on the site's audio chain.
+- Anyone commissioning it should treat it as plant equipment — check the
+  schedule, the volume and the output routing on site before leaving it running.
+
+See **Operating notes** below before deploying it on a real system.
+
 ## Adding the azan file
 
 Drop your recording at:
@@ -95,7 +114,28 @@ js/app.js         rendering, countdown, azan scheduler
 audio/azan.mp3    your recording (not included)
 ```
 
+## Operating notes
+
+For an unattended PA installation, the things that actually bite:
+
+- **The tab must stay open.** A closed tab runs no timers, so nothing fires.
+  Disable sleep, screen lock and automatic browser updates on the host machine,
+  and check the tab is still alive after any reboot.
+- **Audio must be unlocked once per session.** Browsers block playback until the
+  page has seen a click, so after any restart someone has to press
+  **Aktifkan azan** once. Use the **Uji azan** button to confirm the signal
+  reaches the speakers before walking away.
+- **The 90-second window is intentional.** A prayer whose time passed while the
+  machine was down will not play late — it is skipped. This prevents an azan
+  going out over the floor at an arbitrary hour after a power cut.
+- **System clock matters.** Times are matched against the host's local clock, so
+  keep it on NTP and in the correct timezone.
+- **Volume is set in the page, not just the amplifier.** The slider persists
+  between visits; confirm both it and the amp gain after any maintenance.
+
 ## Accuracy
 
 Times come from the upstream API, which sources JAKIM's e-Solat data. Confirm
-against a local mosque before relying on this for anything important.
+the schedule against the local mosque or the relevant state religious authority
+before putting it on a PA system — an automated announcer that is wrong is wrong
+in front of the whole site, and the operator is responsible for what it plays.
