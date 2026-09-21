@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ms">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Waktu Solat</title>
+<meta name="description" content="Waktu solat Malaysia dengan azan automatik.">
+<meta name="theme-color" content="#0b1f1a">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🕌</text></svg>">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<div class="bg-glow" aria-hidden="true"></div>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true">🕌</span>
+    <div>
+      <h1>Waktu Solat</h1>
+      <p class="brand-sub" id="zoneLabel">Memuatkan…</p>
+    </div>
+  </div>
+
+  <div class="topbar-actions">
+    <label class="field">
+      <span class="field-label">Zon</span>
+      <select id="zoneSelect" aria-label="Pilih zon solat"></select>
+    </label>
+    <button id="refreshBtn" class="btn btn-ghost" type="button" title="Muat semula data">
+      <span aria-hidden="true">⟳</span><span class="btn-text">Muat semula</span>
+    </button>
+  </div>
+</header>
+
+<main>
+  <!-- Audio unlock banner: browsers block autoplay until the user interacts -->
+  <div id="audioBanner" class="banner" hidden>
+    <div class="banner-text">
+      <strong>Azan belum diaktifkan.</strong>
+      <span>Pelayar menyekat main-auto sehingga anda menekan butang.</span>
+    </div>
+    <button id="enableAudioBtn" class="btn btn-primary" type="button">Aktifkan azan</button>
+  </div>
+
+  <div id="errorBox" class="banner banner-error" hidden>
+    <div class="banner-text">
+      <strong id="errorTitle">Ralat</strong>
+      <span id="errorMsg"></span>
+    </div>
+    <button id="dismissErrorBtn" class="btn btn-ghost" type="button">Tutup</button>
+  </div>
+
+  <section class="hero" aria-live="polite">
+    <div class="hero-clock">
+      <div class="now" id="clock">--:--:--</div>
+      <div class="dates">
+        <span id="gregDate">—</span>
+        <span class="dot" aria-hidden="true">•</span>
+        <span id="hijriDate">—</span>
+      </div>
+    </div>
+
+    <div class="hero-next">
+      <p class="eyebrow">Solat seterusnya</p>
+      <p class="next-name" id="nextName">—</p>
+      <p class="next-time" id="nextTime">—</p>
+      <p class="next-countdown" id="countdown">—</p>
+      <div class="progress" role="progressbar" aria-labelledby="nextName" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="times" aria-label="Jadual waktu solat hari ini">
+    <div class="times-head">
+      <h2>Hari ini</h2>
+      <span class="badge" id="sourceBadge">—</span>
+    </div>
+    <ul class="time-grid" id="timeGrid"></ul>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Tetapan azan</h2>
+      <button id="testAzanBtn" class="btn btn-ghost" type="button">Uji azan</button>
+    </div>
+
+    <div class="setting-row">
+      <label class="switch">
+        <input type="checkbox" id="azanEnabled" checked>
+        <span class="switch-track" aria-hidden="true"></span>
+        <span class="switch-label">Mainkan azan pada waktu solat</span>
+      </label>
+    </div>
+
+    <div class="setting-row">
+      <label class="field field-wide">
+        <span class="field-label">Kelantangan <output id="volumeOut">100%</output></span>
+        <input type="range" id="volume" min="0" max="100" step="1" value="100">
+      </label>
+    </div>
+
+    <fieldset class="setting-row">
+      <legend class="field-label">Azan untuk waktu</legend>
+      <div class="chips" id="prayerToggles"></div>
+    </fieldset>
+
+    <div id="playingBar" class="playing" hidden>
+      <span class="pulse" aria-hidden="true"></span>
+      <span id="playingText">Azan sedang dimainkan…</span>
+      <button id="stopAzanBtn" class="btn btn-danger" type="button">Henti</button>
+    </div>
+
+    <p class="hint" id="audioHint"></p>
+  </section>
+
+  <details class="panel debug" id="diagnostics">
+    <summary>Sumber data &amp; diagnostik</summary>
+
+    <p class="hint">
+      Laman ini mencuba beberapa corak URL pada
+      <span class="mono">waktu.solat.my</span> dan <span class="mono">solat.my</span>
+      sehingga ada satu yang memulangkan JSON. Jika anda tahu URL sebenar,
+      masukkan di bawah — gunakan <span class="mono">{zone}</span> sebagai ganti kod zon.
+    </p>
+
+    <label class="field field-wide">
+      <span class="field-label">URL API</span>
+      <input type="text" id="apiUrl" class="text-input" spellcheck="false"
+             placeholder="https://solat.my/api/daily/{zone}">
+    </label>
+
+    <div class="btn-row">
+      <button id="saveApiBtn" class="btn btn-primary" type="button">Simpan &amp; muat semula</button>
+      <button id="resetApiBtn" class="btn btn-ghost" type="button">Kembali ke auto</button>
+    </div>
+
+    <p class="hint">URL yang berjaya digunakan: <span class="mono" id="debugUrl">—</span></p>
+    <pre id="rawJson" class="raw">—</pre>
+  </details>
+</main>
+
+<footer class="footer">
+  <p>Data: <a href="https://waktu.solat.my/api" target="_blank" rel="noopener noreferrer">waktu.solat.my</a> · Sumber asal JAKIM e-Solat.</p>
+  <p class="hint">Sahkan waktu dengan masjid berhampiran sebelum bergantung sepenuhnya.</p>
+</footer>
+
+<!-- The azan clip. Drop your file at audio/azan.mp3 -->
+<audio id="azanAudio" preload="auto" src="audio/azan.mp3"></audio>
+
+<script src="js/zones.js"></script>
+<script src="js/api.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
