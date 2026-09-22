@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Waktu Solat</title>
-<meta name="description" content="Waktu solat Malaysia dengan azan automatik.">
+<meta name="description" content="Waktu solat Malaysia daripada API rasmi JAKIM e-Solat, dengan azan automatik.">
 <meta name="theme-color" content="#0b1f1a">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🕌</text></svg>">
 <link rel="stylesheet" href="css/styles.css">
@@ -118,16 +118,22 @@
     <summary>Sumber data &amp; diagnostik</summary>
 
     <p class="hint">
-      Laman ini mencuba beberapa corak URL pada
-      <span class="mono">waktu.solat.my</span> dan <span class="mono">solat.my</span>
-      sehingga ada satu yang memulangkan JSON. Jika anda tahu URL sebenar,
-      masukkan di bawah — gunakan <span class="mono">{zone}</span> sebagai ganti kod zon.
+      Data diambil terus daripada API rasmi JAKIM e-Solat
+      (<span class="mono">e-solat.gov.my</span>), satu tahun sekali muat turun.
+    </p>
+
+    <p class="hint">
+      Jika pelayar menyekat permintaan itu kerana CORS, masukkan URL geganti
+      (<i>relay</i>) anda sendiri di bawah — ia akan dicuba dahulu. Gunakan
+      <span class="mono">{url}</span> untuk keseluruhan URL JAKIM yang telah
+      dienkod, atau <span class="mono">{zone}</span> dan
+      <span class="mono">{period}</span> jika geganti anda membina URL sendiri.
     </p>
 
     <label class="field field-wide">
-      <span class="field-label">URL API</span>
+      <span class="field-label">URL geganti (pilihan)</span>
       <input type="text" id="apiUrl" class="text-input" spellcheck="false"
-             placeholder="https://solat.my/api/daily/{zone}">
+             placeholder="https://contoh-geganti-anda/ambil?url={url}">
     </label>
 
     <div class="btn-row">
@@ -135,13 +141,13 @@
       <button id="resetApiBtn" class="btn btn-ghost" type="button">Kembali ke auto</button>
     </div>
 
-    <p class="hint">URL yang berjaya digunakan: <span class="mono" id="debugUrl">—</span></p>
+    <p class="hint">URL yang menjawab: <span class="mono" id="debugUrl">—</span></p>
     <pre id="rawJson" class="raw">—</pre>
   </details>
 </main>
 
 <footer class="footer">
-  <p>Data: <a href="https://waktu.solat.my/api" target="_blank" rel="noopener noreferrer">waktu.solat.my</a> · Sumber asal JAKIM e-Solat.</p>
+  <p>Data: <a href="https://www.e-solat.gov.my/" target="_blank" rel="noopener noreferrer">JAKIM e-Solat</a> · API rasmi <span class="mono">esolatApi/takwimsolat</span>.</p>
   <p class="hint">Sahkan waktu dengan masjid berhampiran sebelum bergantung sepenuhnya.</p>
 </footer>
 

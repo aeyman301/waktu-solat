@@ -17,21 +17,31 @@
   var INFO_SLOTS = ["imsak", "syuruk", "dhuha"];
 
   var LABELS = {};
-  window.SolatAPI.SLOTS.forEach(function (s) { LABELS[s.key] = s.label; });
+  window.JakimAPI.SLOTS.forEach(function (s) { LABELS[s.key] = s.label; });
 
   var TRIGGER_WINDOW_MS = 90 * 1000;
   var REFRESH_MS = 6 * 60 * 60 * 1000;
+  // Floor between network attempts, so an offline machine does not retry
+  // JAKIM every minute for the rest of the day.
+  var RETRY_MS = 15 * 60 * 1000;
 
   var el = {};
   var state = {
     zone: null,
     days: [],
+    byDate: {},
     today: null,
     source: "",
     lastFetch: 0,
+    lastAttempt: 0,
     fired: loadFired(),
     prayers: {}
   };
+
+  // A yearly download is ~365 records. The countdown only ever looks at today
+  // and tomorrow, so the flattened timeline is built once per day rather than
+  // on every one-second tick.
+  var timelineCache = { key: null, list: [] };
 
   /* ---------------------------------------------------------------- *
    * Storage helpers
@@ -172,7 +182,7 @@
     });
   }
 
-  // Supports links in the same shape as solat.my, e.g. ?zone=PRK05&name=Kg%20Gajah
+  // Deep links carry the zone, e.g. ?zone=PRK05&name=Kg%20Gajah
   function zoneFromQuery() {
     try {
       var params = new URLSearchParams(window.location.search);
@@ -196,7 +206,7 @@
     if (!window.ZONE_INDEX[state.zone]) state.zone = "WLY01";
     write(STORE.zone, state.zone);
 
-    el.apiUrl.value = window.SolatAPI.customTemplate() || "";
+    el.apiUrl.value = window.JakimAPI.customTemplate() || "";
 
     el.azanEnabled.checked = read(STORE.enabled, "1") === "1";
 
@@ -220,7 +230,7 @@
       // A new zone means a different schedule; let today's azan fire again.
       state.fired = { date: dayKey(new Date()), keys: [] };
       write(STORE.fired, JSON.stringify(state.fired));
-      loadData();
+      loadData({ preferCache: true });
     });
 
     el.refreshBtn.addEventListener("click", function () { loadData(); });
@@ -257,13 +267,13 @@
     el.stopAzanBtn.addEventListener("click", function () { window.Azan.stop(); });
 
     el.saveApiBtn.addEventListener("click", function () {
-      window.SolatAPI.setCustomTemplate(el.apiUrl.value);
+      window.JakimAPI.setCustomTemplate(el.apiUrl.value);
       loadData();
     });
 
     el.resetApiBtn.addEventListener("click", function () {
       el.apiUrl.value = "";
-      window.SolatAPI.setCustomTemplate("");
+      window.JakimAPI.setCustomTemplate("");
       loadData();
     });
 
@@ -288,36 +298,75 @@
    * Data
    * ---------------------------------------------------------------- */
 
-  function loadData() {
-    var zone = state.zone;
-    var info = window.ZONE_INDEX[zone];
+  function renderZoneLabel() {
+    var info = window.ZONE_INDEX[state.zone];
     var custom = nameFromQuery();
     el.zoneLabel.textContent = custom
-      ? custom + " · " + zone
-      : (info ? info.area + " · " + info.state : zone);
-    el.sourceBadge.textContent = "Memuatkan…";
+      ? custom + " \u00B7 " + state.zone
+      : (info ? info.area + " \u00B7 " + info.state : state.zone);
+  }
 
-    return window.SolatAPI.load(zone).then(function (result) {
-      applyPayload(result.raw, result.days, "API", result.url);
-      write(STORE.cache + zone, JSON.stringify({ savedAt: Date.now(), raw: result.raw }));
+  /*
+   * A yearly download stays useful long after the request that fetched it, so
+   * the cache is applied before the network is touched. On a machine that
+   * reboots without a connection the schedule is on screen immediately, and a
+   * later refresh only ever replaces it with something newer.
+   */
+  function loadData(options) {
+    var zone = state.zone;
+    var fromCache = false;
+
+    state.lastAttempt = Date.now();
+
+    renderZoneLabel();
+
+    if (options && options.preferCache) {
+      fromCache = showCache(zone);
+    }
+    if (!fromCache) el.sourceBadge.textContent = "Memuatkan\u2026";
+
+    return window.JakimAPI.load(zone).then(function (result) {
+      applyPayload(result.raw, result.days, "JAKIM", result.url);
+      // Only a real answer counts as fresh; the cache must not delay a retry.
+      state.lastFetch = Date.now();
+      writeCache(zone, result.raw);
       el.errorBox.hidden = true;
     }).catch(function (err) {
-      var fallback = readCache(zone);
-      if (fallback) {
-        applyPayload(fallback.raw, window.SolatAPI.normalise(fallback.raw), "Cache", "—");
-        showError("Tidak dapat menghubungi API", err.message + " — memaparkan data tersimpan (" + fmtGregorian(new Date(fallback.savedAt)) + ").");
-      } else {
-        state.days = [];
-        state.today = null;
-        el.sourceBadge.textContent = "Tiada data";
-        el.timeGrid.innerHTML = "";
-        el.rawJson.textContent = "—";
-        showError("Tidak dapat memuatkan waktu solat", err.message);
-        // Nothing to show, so surface the panel that lets the user set the URL.
-        el.diagnostics.open = true;
-        render();
+      // The fetch failed. Anything already on screen from the cache stays.
+      if (fromCache || showCache(zone)) {
+        showError("Tidak dapat menghubungi JAKIM", err.message + " \u2014 memaparkan data tersimpan.");
+        return;
       }
+
+      state.days = [];
+      state.byDate = {};
+      state.today = null;
+      timelineCache = { key: null, list: [] };
+      el.sourceBadge.textContent = "Tiada data";
+      el.timeGrid.innerHTML = "";
+      el.rawJson.textContent = "\u2014";
+      showError("Tidak dapat memuatkan waktu solat", err.message);
+      // Nothing to show, so surface the panel that lets the user set a relay.
+      el.diagnostics.open = true;
+      render();
     });
+  }
+
+  /* Applies the stored payload for `zone`. Returns true when it was usable. */
+  function showCache(zone) {
+    var entry = readCache(zone);
+    if (!entry) return false;
+
+    try {
+      var days = window.JakimAPI.normalise(entry.raw);
+      var covers = days.some(function (d) { return dayKey(d.date) === dayKey(new Date()); });
+      applyPayload(entry.raw, days, covers ? "Simpanan" : "Simpanan (lapuk)", "\u2014");
+      return true;
+    } catch (e) {
+      // Corrupt or written by an older version — drop it rather than retry.
+      try { localStorage.removeItem(STORE.cache + zone); } catch (e2) { /* ignore */ }
+      return false;
+    }
   }
 
   function readCache(zone) {
@@ -329,11 +378,29 @@
     }
   }
 
+  function writeCache(zone, raw) {
+    try {
+      localStorage.setItem(STORE.cache + zone, JSON.stringify({ savedAt: Date.now(), raw: raw }));
+    } catch (e) {
+      // A year of prayer times can exceed the quota once several zones are
+      // stored. Clear the other zones and keep the one in use.
+      try {
+        Object.keys(localStorage)
+          .filter(function (k) { return k.indexOf(STORE.cache) === 0 && k !== STORE.cache + zone; })
+          .forEach(function (k) { localStorage.removeItem(k); });
+        localStorage.setItem(STORE.cache + zone, JSON.stringify({ savedAt: Date.now(), raw: raw }));
+      } catch (e2) { /* give up: the page still works, just without a cache */ }
+    }
+  }
+
   function applyPayload(raw, days, source, url) {
     state.days = days;
+    state.byDate = {};
+    days.forEach(function (d) { state.byDate[dayKey(d.date)] = d; });
+
     state.source = source;
-    state.lastFetch = Date.now();
     state.today = findToday(days);
+    timelineCache = { key: null, list: [] };
 
     el.sourceBadge.textContent = source + " · " + days.length + " hari";
     el.debugUrl.textContent = url;
@@ -348,34 +415,68 @@
   }
 
   function findToday(days) {
-    var key = dayKey(new Date());
-    for (var i = 0; i < days.length; i++) {
-      if (dayKey(days[i].date) === key) return days[i];
-    }
+    var hit = state.byDate[dayKey(new Date())];
+    if (hit) return hit;
+    // A single-day response (period=today) is today's by definition.
     return days.length === 1 ? days[0] : null;
   }
 
   function maybeRefresh() {
-    var staleData = Date.now() - state.lastFetch > REFRESH_MS;
-    var wrongDay = !state.today || dayKey(state.today.date) !== dayKey(new Date());
-    if (staleData || wrongDay) loadData();
+    var todayKey = dayKey(new Date());
+    var cooling = Date.now() - state.lastAttempt < RETRY_MS;
+
+    // A yearly download already holds tomorrow, so the usual midnight rollover
+    // is a matter of re-pointing at the new day, not fetching again.
+    if (!state.today || dayKey(state.today.date) !== todayKey) {
+      var known = state.byDate[todayKey];
+      if (known) {
+        state.today = known;
+        timelineCache = { key: null, list: [] };
+        render();
+      } else if (!cooling) {
+        loadData();
+        return;
+      }
+    }
+
+    if (!cooling && Date.now() - state.lastFetch > REFRESH_MS) loadData();
   }
 
   /* ---------------------------------------------------------------- *
    * Schedule helpers
    * ---------------------------------------------------------------- */
 
-  // Flattens the five fard prayers across every loaded day into one timeline.
+  /*
+   * The five fard prayers of today and tomorrow, flattened and sorted.
+   *
+   * Two days is all the countdown needs — the next prayer after Isyak is the
+   * following Subuh — and it keeps the per-second tick off the other 363 days
+   * of a yearly download. Rebuilt when the calendar day changes.
+   */
   function timeline() {
+    var today = new Date();
+    var key = dayKey(today);
+    if (timelineCache.key === key) return timelineCache.list;
+
+    var tomorrow = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1);
+    var wanted = [state.byDate[key], state.byDate[dayKey(tomorrow)]];
+
+    // Fall back to whatever was loaded when the index has no entry for today
+    // (a single-day response, or a payload that does not cover the date).
+    if (!wanted[0] && !wanted[1]) wanted = state.days.slice(0, 2);
+
     var out = [];
-    state.days.forEach(function (day) {
-      AZAN_SLOTS.forEach(function (key) {
-        if (day.times[key]) {
-          out.push({ key: key, label: LABELS[key] || key, at: day.times[key], date: day.date });
+    wanted.forEach(function (day) {
+      if (!day) return;
+      AZAN_SLOTS.forEach(function (slot) {
+        if (day.times[slot]) {
+          out.push({ key: slot, label: LABELS[slot] || slot, at: day.times[slot], date: day.date });
         }
       });
     });
+
     out.sort(function (a, b) { return a.at - b.at; });
+    timelineCache = { key: key, list: out };
     return out;
   }
 
@@ -559,7 +660,7 @@
     bindEvents();
 
     render();
-    loadData();
+    loadData({ preferCache: true });
 
     setInterval(tick, 1000);
   }

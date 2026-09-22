@@ -33,12 +33,13 @@ window.ZONES = [
     ["PHG03", "Jerantut, Temerloh, Maran, Bera, Chenor, Jengka"],
     ["PHG04", "Bentong, Lipis, Raub"],
     ["PHG05", "Genting Sempah, Janda Baik, Bukit Tinggi"],
-    ["PHG06", "Cameron Highlands, Genting Highlands, Bukit Fraser"]
+    ["PHG06", "Cameron Highlands, Genting Highlands, Bukit Fraser"],
+    ["PHG07", "Rompin (Mukim Rompin, Endau, Pontian)"]
   ]},
   { state: "Perak", zones: [
     ["PRK01", "Tapah, Slim River, Tanjung Malim"],
     ["PRK02", "Kuala Kangsar, Sg. Siput, Ipoh, Batu Gajah, Kampar"],
-    ["PRK03", "Lenggong, Pengkalan Hulu, Grik"],
+    ["PRK03", "Lenggong, Pengkalan Hulu, Gerik"],
     ["PRK04", "Temengor, Belum"],
     ["PRK05", "Kg Gajah, Teluk Intan, Bagan Datuk, Seri Iskandar, Beruas, Parit, Lumut, Sitiawan, Pulau Pangkor"],
     ["PRK06", "Selama, Taiping, Bagan Serai, Parit Buntar"],
@@ -73,7 +74,7 @@ window.ZONES = [
     ["SWK09", "Zon Khas (Kampung Patarikan)"]
   ]},
   { state: "Selangor", zones: [
-    ["SGR01", "Gombak, Petaling, Sepang, Hulu Langat, Hulu Selangor"],
+    ["SGR01", "Gombak, Petaling, Sepang, Hulu Langat, Hulu Selangor, Shah Alam"],
     ["SGR02", "Kuala Selangor, Sabak Bernam"],
     ["SGR03", "Klang, Kuala Langat"]
   ]},
