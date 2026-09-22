@@ -175,6 +175,18 @@
     el.townList.appendChild(frag);
   }
 
+  /* Datalist option text -> zone, built once on first use. */
+  var suggested = null;
+  function suggestedValues() {
+    if (!suggested) {
+      suggested = {};
+      window.LOCATION_INDEX.forEach(function (loc) {
+        suggested[loc.town + " \u2014 " + loc.code] = loc.code;
+      });
+    }
+    return suggested;
+  }
+
   /* Accepts "Sitiawan — PRK05", a bare town name, or a bare zone code. */
   function zoneFromSearch(text) {
     var raw = String(text || "").trim();
@@ -287,8 +299,18 @@
       }
     });
 
+    /*
+     * `change` on a text input only fires on blur, which would leave a picked
+     * suggestion looking like it did nothing. A datalist selection arrives as
+     * an `input` event whose value is exactly one of the offered options, so
+     * that case is applied straight away. A half-typed name is not: it only
+     * clears the last validation message.
+     */
     el.townSearch.addEventListener("input", function () {
       el.townSearch.setCustomValidity("");
+
+      var picked = suggestedValues()[el.townSearch.value.trim()];
+      if (picked && picked !== state.zone) applyZoneChange(picked);
     });
 
     el.zoneSelect.addEventListener("change", function () {

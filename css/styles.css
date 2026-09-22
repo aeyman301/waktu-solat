@@ -366,6 +366,10 @@ output { font-family: var(--mono); color: var(--text); }
   .topbar { align-items: stretch; }
   .topbar-actions { width: 100%; }
   .topbar-actions .field { flex: 1; }
+  /* Three controls abreast truncates all three at phone width, so the town box
+     takes a row of its own and the zone select shares the next one with the
+     refresh button. */
+  .topbar-actions .field-town { flex-basis: 100%; }
   select { max-width: none; width: 100%; }
   #townSearch { max-width: none; min-width: 0; width: 100%; }
   .btn-text { display: none; }
