@@ -4,7 +4,9 @@ A static web page that shows Malaysian prayer times for a chosen JAKIM zone and
 plays `azan.mp3` automatically when each prayer time arrives. Times come from
 JAKIM's official e-Solat API, a whole year per download.
 
-No build step, no dependencies — open `index.html` or serve the folder.
+No build step and no runtime dependencies — the page is plain static files.
+The `npm` scripts are tooling only (a server, a probe, tests) and pull nothing
+in.
 
 ## Intended use
 
@@ -39,26 +41,37 @@ works and shows a notice under **Tetapan azan** rather than failing silently.
 ## Running it
 
 ```sh
-python3 -m http.server 8000
+npm start
 # then open http://localhost:8000
 ```
 
-Opening `index.html` straight off disk mostly works, but a local server is
-better: `file://` pages are treated as an opaque origin, so the request to
-e-Solat is more likely to be blocked.
+That serves the page **and** relays the prayer-time APIs from the same origin,
+which is what stops the browser blocking them — see **CORS, and how to get past
+it**. Open the page, expand **Sumber data & diagnostik**, and put this in the
+relay field:
 
-If the schedule does not load, the cause is almost always CORS — use
-`tools/serve.py` instead, which serves the page and the JAKIM data from one
-origin:
-
-```sh
-python3 tools/serve.py
+```
+/api/solat?zone={zone}&year={year}
 ```
 
-See **CORS, and how to get past it** below.
+`npm start` needs Node 18 or newer and installs nothing. If the box has Python
+instead, `python3 tools/serve.py` does the same job.
 
-It is plain static files, so GitHub Pages, Netlify, Vercel or any web host will
-serve it as-is.
+Other commands:
+
+```sh
+npm test                          # parser tests, no network
+npm run probe -- SGR01 2026       # fetch both upstreams and report what came back
+npm run probe -- SGR01 2026 --relay http://localhost:8000
+```
+
+`npm run probe` is the thing to reach for when the page will not load. It runs
+the response through `js/api.js` — the same parser the page uses — so it
+answers "the page can read this", not merely "the server replied". It also
+reports whether the upstream sent an `Access-Control-Allow-Origin` header.
+
+For a plain static host with no relay, `python3 -m http.server 8000` still
+serves the page; whether it can reach the APIs depends on CORS.
 
 ## Features
 
@@ -82,26 +95,34 @@ Browsers block audio until the page has seen a click, so the first visit shows a
 **Aktifkan azan** button. One press unlocks playback for the rest of the session.
 The tab has to stay open for the azan to fire — a closed tab runs no timers.
 
-## The API endpoint
+## The API endpoints
 
-The page reads JAKIM's official e-Solat API directly:
+Two upstreams, tried in order. Both serve JAKIM's takwim.
 
 ```
-https://www.e-solat.gov.my/index.php?r=esolatApi/takwimsolat&period=year&zone=WLY01
+https://solat.my/api/yearly/SGR01/2026
+https://www.e-solat.gov.my/index.php?r=esolatApi/takwimsolat&period=year&zone=SGR01
 ```
+
+solat.my has the tidier route and takes the year directly, so it is tried
+first. e-Solat is the official source and the fallback; if its yearly request
+fails, `month` and then `today` are tried before giving up. Whichever answers
+is named in the badge above the schedule.
 
 `js/api.js` is a port of the client in
 [farafarizul/myazan](https://github.com/farafarizul/myazan) v0.2.0
-(`src/main/services/prayer-time/`), which drives the same endpoint from an
-Electron main process. The request shape, the retry policy and the validation
-rules are kept; the transport is adapted for a browser page.
+(`src/main/services/prayer-time/`), which drives e-Solat from an Electron main
+process. The retry policy and validation rules are kept; the transport is
+adapted for a browser page.
 
-The response looks like this:
+### Two shapes, one parser
+
+e-Solat's response is documented by its own client, so it is parsed strictly:
 
 ```json
 {
   "status": "OK!",
-  "zone": "WLY01",
+  "zone": "SGR01",
   "prayerTime": [
     { "hijri": "1447-03-29", "date": "01-Jan-2026", "day": "Khamis",
       "imsak": "05:47:00", "fajr": "05:57:00", "syuruk": "07:10:00",
@@ -111,8 +132,22 @@ The response looks like this:
 }
 ```
 
-JAKIM's field names are English (`fajr`, `dhuhr`, `asr`, `isha`); the page
-displays the Malay ones (Subuh, Zohor, Asar, Isyak).
+**solat.my's shape is not documented, and could not be reached from where this
+was written**, so the parser does not assume one. When the strict read does not
+fit, it locates the list of days wherever it sits — the payload itself, or
+under `data`, `prayerTime`, `waktuSolat` and similar — and matches each day's
+fields by name against both the English spellings JAKIM uses (`fajr`, `dhuhr`,
+`asr`, `isha`) and the Malay ones a local API is likely to use (`subuh`,
+`zohor`, `asar`, `isyak`). Dates are accepted as `01-Jan-2026`, `2026-01-01`,
+`01/01/2026` or a Unix timestamp; times as `05:57:00`, `05:57` or `5:57 pm`.
+
+`npm test` pins the e-Solat shape exactly and covers that range for solat.my.
+If the real response is none of them, `npm run probe` will print what arrived
+and say the parse failed — that output is what to paste into an issue, and
+`tools/parser.test.mjs` is where the fix belongs.
+
+A malformed day is skipped rather than failing the whole download: losing one
+day out of a year is better than losing the year.
 
 ### One download per year
 
@@ -135,11 +170,11 @@ day out of a year is better than losing the year.
 
 ### CORS, and how to get past it
 
-e-Solat sends no `Access-Control-Allow-Origin` header, so a browser will refuse
-to let a page on another origin read the response. The request itself succeeds
-— you can open the URL in a tab and see the JSON — but a `fetch` from the page
-is blocked. You will see **Tiada data** above the schedule and
-`Failed to fetch` in **Sumber data & diagnostik**.
+Neither upstream sends an `Access-Control-Allow-Origin` header, so a browser
+will refuse to let a page on another origin read the response. The request
+itself succeeds — open either URL in a tab and the JSON is there — but a
+`fetch` from the page is blocked. You will see **Tiada data** above the
+schedule and `Failed to fetch` in **Sumber data & diagnostik**.
 
 Nothing written in the page can fix this. The check is the browser's and the
 missing header is the server's, so the only real fix is to stop making it a
@@ -149,73 +184,88 @@ page.**
 #### The short way
 
 ```sh
-python3 tools/serve.py
-# serving /path/to/waktu-solat on http://0.0.0.0:8000
-# relay at /api/jakim?zone={zone}&period={period}
+npm start
 ```
 
-Open the page, expand **Sumber data & diagnostik**, and put this in the relay
-field:
+Then put this in the relay field and press **Simpan & muat semula**:
 
 ```
-/api/jakim?zone={zone}&period={period}
+/api/solat?zone={zone}&year={year}
 ```
 
-Press **Simpan & muat semula**. The badge should turn to **JAKIM · 365 hari**.
+The badge should turn to **Geganti → solat.my · 365 hari**. For e-Solat
+instead, use `/api/jakim?zone={zone}&period={period}`.
 
-`tools/serve.py` is the standard library only — the same thing as
-`python3 -m http.server`, plus one extra route that fetches e-Solat server-side
-and hands the bytes back from the page's own origin. Server-to-server requests
-have no CORS to answer to.
+`tools/serve.mjs` is a static file server plus two routes that fetch upstream
+**server-side** and hand the bytes back from the page's own origin.
+Server-to-server requests have no CORS to answer to. Node 18+, no dependencies.
+`tools/serve.py` is the same thing for a box with Python but no Node.
 
-It is not a general proxy: the zone must match `^[A-Z]{3}[0-9]{2}$` and the
-period must be one JAKIM recognises, and the upstream URL is rebuilt from those
-two values, so a crafted request cannot point it anywhere else.
+Neither is a general proxy: the zone must match `^[A-Z]{3}[0-9]{2}$`, the year
+must be four digits and the period must be one JAKIM recognises, and the
+upstream URL is rebuilt from those values, so a crafted request cannot point it
+anywhere else.
+
+#### Confirming it worked
+
+```sh
+npm run probe -- SGR01 2026 --relay http://localhost:8000
+```
+
+That prints the HTTP result, whether a CORS header was present, and whether the
+page's own parser could read the payload.
 
 #### If you already run a web server
 
-Put the relay on the same hostname as the page and the effect is identical. The
-relative path `/api/jakim?zone={zone}&period={period}` goes in the relay field
-either way. These two are **sketches — they have not been tested here**, unlike
-`tools/serve.py` above; check them against your own setup.
+Put the relay on the same hostname as the page and the effect is identical.
+These are **sketches — they have not been tested here**, unlike the two servers
+above; check them against your own setup.
 
 nginx:
 
 ```nginx
-location /api/jakim {
+location /api/solat {
     resolver 1.1.1.1 ipv6=off;
-    set $esolat "https://www.e-solat.gov.my/index.php?r=esolatApi/takwimsolat&period=$arg_period&zone=$arg_zone";
-    proxy_pass $esolat;
+    set $solat "https://solat.my/api/yearly/$arg_zone/$arg_year";
+    proxy_pass $solat;
     proxy_ssl_server_name on;
-    proxy_set_header Host www.e-solat.gov.my;
+    proxy_set_header Host solat.my;
 }
 ```
 
 Caddy:
 
 ```caddy
-handle /api/jakim* {
-    rewrite * /index.php?r=esolatApi/takwimsolat&period={query.period}&zone={query.zone}
-    reverse_proxy https://www.e-solat.gov.my {
-        header_up Host www.e-solat.gov.my
+handle /api/solat* {
+    rewrite * /api/yearly/{query.zone}/{query.year}
+    reverse_proxy https://solat.my {
+        header_up Host solat.my
     }
 }
 ```
 
-Neither validates `zone` and `period` the way `tools/serve.py` does, so do not
+Neither validates `zone` and `year` the way the bundled servers do, so do not
 expose either to the open internet without adding that.
 
 #### What not to do
 
 A public CORS proxy will work, and it puts a stranger in the path of what your
-site announces over its loudspeakers — they can see every request, and a bad
-day for them is a silent day for you. The year-long cache means an outage is
+site announces over its loudspeakers — they see every request, and a bad day
+for them is a silent day for you. The year-long cache means an outage is
 survivable, but the schedule is still coming from somebody you have no
 agreement with. For a PA installation, run your own relay.
 
 There is no `--disable-web-security` option worth taking here either: it turns
-the check off for every site that browser visits, on a machine that is meant to
-sit unattended.
+the check off for every site that browser visits, on a machine meant to sit
+unattended.
+
+#### A different failure that looks the same
+
+If `npm run probe` says **UNREACHABLE**, or prints an HTTP 403 whose body
+mentions an allowlist, that is not CORS — it is the network the machine is on
+refusing to route to the host at all. CORS is a browser rule and never affects
+a command-line fetch, so a probe that cannot connect is a firewall, proxy or
+DNS problem. Fix that before touching the relay.
 
 ## Finding a zone
 
@@ -281,7 +331,7 @@ For an unattended PA installation, the things that actually bite:
 - **Volume is set in the page, not just the amplifier.** The slider persists
   between visits; confirm both it and the amp gain after any maintenance.
 - **The relay is part of the installation.** If you fixed CORS with
-  `tools/serve.py` or a proxy in your web server, that process has to be
+  `npm start` or a proxy in your web server, that process has to be
   running for the page to refresh — put it behind systemd, or whatever keeps
   services up on that box, rather than a terminal someone can close. The cached
   year means a stopped relay is not noticed for months, which is exactly why it

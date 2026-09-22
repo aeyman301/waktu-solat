@@ -412,7 +412,8 @@
     if (!fromCache) el.sourceBadge.textContent = "Memuatkan\u2026";
 
     return window.JakimAPI.load(zone).then(function (result) {
-      applyPayload(result.raw, result.days, "JAKIM", result.url);
+      // Say which upstream actually answered, now that there is more than one.
+      applyPayload(result.raw, result.days, result.via || "API", result.url);
       // Only a real answer counts as fresh; the cache must not delay a retry.
       state.lastFetch = Date.now();
       writeCache(zone, result.raw);

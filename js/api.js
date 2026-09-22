@@ -1,76 +1,88 @@
 /*
- * Client for JAKIM's official e-Solat API.
+ * Prayer-time client.
  *
- *   https://www.e-solat.gov.my/index.php?r=esolatApi/takwimsolat&period=year&zone=WLY01
+ * Two upstreams, tried in order:
  *
- * Ported from farafarizul/myazan v0.2.0 (`src/main/services/prayer-time/`),
- * which drives the same endpoint from an Electron main process. The request and
- * validation rules are kept; the transport is adapted for a browser page.
+ *   solat.my      https://solat.my/api/yearly/SGR01/2026
+ *   JAKIM e-Solat https://www.e-solat.gov.my/index.php?r=esolatApi/takwimsolat&period=year&zone=SGR01
  *
- * Response shape:
+ * Both serve JAKIM's data; solat.my has the tidier route and takes the year
+ * directly, e-Solat is the primary source and the fallback. The fetch and
+ * validation rules are ported from farafarizul/myazan v0.2.0
+ * (`src/main/services/prayer-time/`), which drives e-Solat from an Electron
+ * main process; the transport is adapted for a browser page.
  *
- *   {
- *     "status": "OK!",
- *     "zone": "WLY01",
- *     "bearing": "292&deg; 31&acute;",
- *     "prayerTime": [
- *       { "hijri": "1447-03-29", "date": "01-Jan-2026", "day": "Khamis",
- *         "imsak": "05:47:00", "fajr": "05:57:00", "syuruk": "07:10:00",
- *         "dhuha": "07:33:00", "dhuhr": "13:17:00", "asr": "16:40:00",
- *         "maghrib": "19:19:00", "isha": "20:33:00" },
- *       ...
- *     ]
- *   }
+ * e-Solat's shape is known and is parsed strictly:
  *
- * `period=year` returns the whole year in one response, which is what makes an
- * unattended installation practical: one successful fetch covers twelve months,
- * and the parsed result is cached so a later network outage changes nothing.
+ *   { "status": "OK!", "zone": "SGR01",
+ *     "prayerTime": [ { "date": "01-Jan-2026", "hijri": "...",
+ *                       "imsak": "05:47:00", "fajr": "05:57:00", ... } ] }
+ *
+ * solat.my's is not documented, so when the strict parse does not fit, the
+ * payload is read tolerantly instead: the list of days is located wherever it
+ * sits, and each day's fields are matched by name against both the English
+ * spellings JAKIM uses (fajr, dhuhr, asr, isha) and the Malay ones a local API
+ * is likely to use (subuh, zohor, asar, isyak). That keeps one parser honest
+ * about what it knows and still able to read a response nobody has specified.
  */
-window.JakimAPI = (function () {
+window.SolatAPI = (function () {
   "use strict";
 
   var JAKIM_BASE =
     "https://www.e-solat.gov.my/index.php?r=esolatApi/takwimsolat";
+  var SOLATMY_BASE = "https://solat.my/api/yearly";
 
   var CUSTOM_KEY = "waktu-solat.apiUrl";
 
-  var TIMEOUT_MS = 30000;   // myazan uses 30s; the yearly payload is not small.
+  var TIMEOUT_MS = 30000;   // myazan uses 30s; a yearly payload is not small.
   var MAX_ATTEMPTS = 3;
   var BASE_DELAY_MS = 1000; // doubled per attempt: 1s, 2s
-
-  // Tried in order. A whole year is preferred; the shorter periods exist so a
-  // relay that truncates or rejects the large response still yields something.
-  var PERIODS = ["year", "month", "today"];
 
   /* ------------------------------------------------------------------ *
    * Slots
    * ------------------------------------------------------------------ */
 
-  // `key` is what the rest of the app uses; `field` is JAKIM's own name.
+  // `key` is what the rest of the app uses. `aliases` are canonicalised field
+  // names (lowercase, letters only) that map onto it.
   var SLOTS = [
-    { key: "imsak",   field: "imsak",   label: "Imsak"   },
-    { key: "subuh",   field: "fajr",    label: "Subuh"   },
-    { key: "syuruk",  field: "syuruk",  label: "Syuruk"  },
-    { key: "dhuha",   field: "dhuha",   label: "Dhuha"   },
-    { key: "zohor",   field: "dhuhr",   label: "Zohor"   },
-    { key: "asar",    field: "asr",     label: "Asar"    },
-    { key: "maghrib", field: "maghrib", label: "Maghrib" },
-    { key: "isyak",   field: "isha",    label: "Isyak"   }
+    { key: "imsak",   label: "Imsak",
+      aliases: ["imsak"] },
+    { key: "subuh",   label: "Subuh",
+      aliases: ["fajr", "subuh", "subh", "fajar", "shubuh", "suboh"] },
+    { key: "syuruk",  label: "Syuruk",
+      aliases: ["syuruk", "syuruq", "shuruk", "shuruq", "sunrise", "terbit"] },
+    { key: "dhuha",   label: "Dhuha",
+      aliases: ["dhuha", "duha"] },
+    { key: "zohor",   label: "Zohor",
+      aliases: ["dhuhr", "zohor", "zuhr", "zuhur", "dzuhur", "zohar"] },
+    { key: "asar",    label: "Asar",
+      aliases: ["asr", "asar", "ashar", "ashr"] },
+    { key: "maghrib", label: "Maghrib",
+      aliases: ["maghrib", "magrib", "maghribi", "sunset"] },
+    { key: "isyak",   label: "Isyak",
+      aliases: ["isha", "isyak", "isya", "ishak", "ishaa", "eshaa", "isyaa"] }
   ];
 
-  // A row missing any of these is unusable and is dropped.
+  // A day missing any of these is unusable and is dropped.
   var REQUIRED = ["subuh", "zohor", "asar", "maghrib", "isyak"];
+
+  var DATE_ALIASES  = ["date", "tarikh", "gregorian", "masihi", "miladi", "tarikhmasihi"];
+  var HIJRI_ALIASES = ["hijri", "hijrah", "tarikhhijri", "islamicdate", "hijridate"];
+
+  // Where a list of days is usually found when it is not the payload itself.
+  var LIST_KEYS = ["prayertime", "prayertimes", "waktusolat", "data", "times",
+                   "result", "results", "records", "days", "schedule", "items"];
 
   /* ------------------------------------------------------------------ *
    * Endpoint
    * ------------------------------------------------------------------ */
 
   /*
-   * e-Solat is a government host and does not promise CORS headers, so a page
-   * on another origin may not be allowed to read the response even though the
-   * request succeeds. An operator who needs a relay puts its URL here; it is
-   * tried before the direct call. Placeholders: {zone}, {period}, and {url}
-   * for the whole encoded JAKIM URL (what generic CORS relays expect).
+   * Neither upstream promises CORS headers, so a page on another origin may be
+   * refused the response even though the request succeeds. An operator who
+   * needs a relay puts its URL here and it is tried before each direct call.
+   * Placeholders: {zone}, {year}, {period}, and {url} for the whole encoded
+   * upstream URL, which is what generic relays expect.
    */
   function customTemplate() {
     try {
@@ -88,20 +100,50 @@ window.JakimAPI = (function () {
     } catch (e) { /* storage unavailable */ }
   }
 
-  function directUrl(zone, period) {
+  function solatMyUrl(zone, year) {
+    return SOLATMY_BASE + "/" + encodeURIComponent(zone) + "/" + encodeURIComponent(year);
+  }
+
+  function jakimUrl(zone, period) {
     return JAKIM_BASE +
       "&period=" + encodeURIComponent(period) +
       "&zone=" + encodeURIComponent(zone);
   }
 
-  function expand(template, zone, period) {
-    var direct = directUrl(zone, period);
+  function expand(template, ctx) {
     if (/\{url\}/i.test(template)) {
-      return template.replace(/\{url\}/gi, encodeURIComponent(direct));
+      return template.replace(/\{url\}/gi, encodeURIComponent(ctx.url));
     }
     return template
-      .replace(/\{zone\}/gi, encodeURIComponent(zone))
-      .replace(/\{period\}/gi, encodeURIComponent(period));
+      .replace(/\{zone\}/gi, encodeURIComponent(ctx.zone))
+      .replace(/\{year\}/gi, encodeURIComponent(ctx.year))
+      .replace(/\{period\}/gi, encodeURIComponent(ctx.period));
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Field matching
+   * ------------------------------------------------------------------ */
+
+  function canon(k) {
+    return String(k).toLowerCase().replace(/[^a-z]/g, "");
+  }
+
+  /* Builds { canonicalKey: value } once per record, so each lookup is cheap. */
+  function flatten(obj) {
+    var map = {};
+    Object.keys(obj).forEach(function (k) {
+      var c = canon(k);
+      if (!(c in map)) map[c] = obj[k];
+    });
+    return map;
+  }
+
+  function pick(map, aliases) {
+    for (var i = 0; i < aliases.length; i++) {
+      var v = map[aliases[i]];
+      if (v !== undefined && v !== null && v !== "") return v;
+    }
+    return undefined;
   }
 
   /* ------------------------------------------------------------------ *
@@ -111,38 +153,84 @@ window.JakimAPI = (function () {
   var MONTHS = {
     jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
     jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11,
-    // Malay spellings, in case the API is queried with lang=ms.
-    mei: 4, ogo: 7, ogos: 7, okt: 9, dis: 11
+    // Malay spellings, for an API queried with lang=ms.
+    mei: 4, ogo: 7, ogos: 7, okt: 9, dis: 11, julai: 6, jun2: 5
   };
 
-  // "01-Jan-2026" -> { y, m, d }. Returns null when unrecognised.
-  function parseJakimDate(raw) {
-    if (typeof raw !== "string") return null;
-    var parts = raw.trim().split("-");
-    if (parts.length !== 3) return null;
+  /* Returns { y, m, d } or null. Handles the formats these APIs actually use. */
+  function parseDate(raw) {
+    if (raw === null || raw === undefined) return null;
 
-    var day = Number(parts[0]);
-    var month = MONTHS[parts[1].slice(0, 3).toLowerCase()];
-    var year = Number(parts[2]);
+    // Unix timestamp, seconds or milliseconds.
+    if (typeof raw === "number" && raw >= 1e9) {
+      var e = new Date(raw >= 1e12 ? raw : raw * 1000);
+      return isNaN(e.getTime())
+        ? null
+        : { y: e.getFullYear(), m: e.getMonth(), d: e.getDate() };
+    }
 
-    if (!isFinite(day) || day < 1 || day > 31) return null;
-    if (month === undefined) return null;
-    if (!isFinite(year) || year < 2000 || year > 2999) return null;
+    var str = String(raw).trim();
+    if (!str) return null;
 
-    return { y: year, m: month, d: day };
+    // "01-Jan-2026" — e-Solat's own format.
+    var named = str.match(/^(\d{1,2})[-\s\/]([A-Za-z]{3,})[-\s\/](\d{4})/);
+    if (named) {
+      var mo = MONTHS[named[2].slice(0, 3).toLowerCase()];
+      if (mo !== undefined) return ymd(Number(named[3]), mo, Number(named[1]));
+    }
+
+    // "2026-01-01" or "2026-01-01T00:00:00"
+    var iso = str.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (iso) return ymd(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+
+    // "01/01/2026" — day first, which is the Malaysian convention.
+    var dmy = str.match(/^(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{4})$/);
+    if (dmy) return ymd(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]));
+
+    return null;
   }
 
-  // "05:57:00" or "05:57" -> { h, m, s }. Returns null when unrecognised.
-  var TIME_RE = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/;
+  function ymd(y, m, d) {
+    if (!isFinite(y) || y < 2000 || y > 2999) return null;
+    if (!isFinite(m) || m < 0 || m > 11) return null;
+    if (!isFinite(d) || d < 1 || d > 31) return null;
+    return { y: y, m: m, d: d };
+  }
 
-  function parseJakimTime(raw) {
-    if (typeof raw !== "string") return null;
-    var m = TIME_RE.exec(raw.trim());
+  var TIME_RE = /^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([ap]\.?m\.?)?$/i;
+
+  /* Returns { h, m, s } or null. Accepts "05:57:00", "5:57", "5:57 pm". */
+  function parseTime(raw) {
+    if (raw === null || raw === undefined) return null;
+
+    // Some APIs give a full timestamp per prayer rather than a clock time.
+    if (typeof raw === "number" && raw >= 1e9) {
+      var e = new Date(raw >= 1e12 ? raw : raw * 1000);
+      return isNaN(e.getTime())
+        ? null
+        : { h: e.getHours(), m: e.getMinutes(), s: e.getSeconds() };
+    }
+
+    var str = String(raw).trim();
+    if (!str) return null;
+
+    if (/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(str)) {
+      var d = new Date(str.replace(" ", "T"));
+      if (!isNaN(d.getTime())) {
+        return { h: d.getHours(), m: d.getMinutes(), s: d.getSeconds() };
+      }
+    }
+
+    var m = TIME_RE.exec(str);
     if (!m) return null;
 
     var h = Number(m[1]);
     var min = Number(m[2]);
     var s = m[3] ? Number(m[3]) : 0;
+    var mer = m[4] ? m[4].toLowerCase().replace(/\./g, "") : "";
+
+    if (mer === "pm" && h < 12) h += 12;
+    if (mer === "am" && h === 12) h = 0;
 
     if (h > 23 || min > 59 || s > 59) return null;
     return { h: h, m: min, s: s };
@@ -153,35 +241,75 @@ window.JakimAPI = (function () {
    * ------------------------------------------------------------------ */
 
   /*
-   * Turns one API row into { date, hijri, day, zone, times } with real Date
-   * objects pinned to that row's day, or null when the row is unusable.
-   *
-   * myazan aborts the whole parse on a bad row. Here a bad row is skipped
-   * instead: on an unattended machine, losing one day of a yearly download is
-   * far better than losing the download.
+   * Locates the list of day records. Checks the conventional key names first,
+   * then walks shallowly for the first array whose entries look like days —
+   * bounded, so a large payload cannot turn this into a deep search.
    */
+  function findList(payload) {
+    if (Array.isArray(payload)) return payload;
+    if (!payload || typeof payload !== "object") return null;
+
+    var map = flatten(payload);
+    for (var i = 0; i < LIST_KEYS.length; i++) {
+      var v = map[LIST_KEYS[i]];
+      if (Array.isArray(v) && v.length) return v;
+    }
+
+    var queue = [payload];
+    for (var depth = 0; depth < 3 && queue.length; depth++) {
+      var next = [];
+      for (var q = 0; q < queue.length; q++) {
+        var node = queue[q];
+        if (!node || typeof node !== "object") continue;
+        var keys = Object.keys(node);
+        for (var k = 0; k < keys.length; k++) {
+          var val = node[keys[k]];
+          if (Array.isArray(val) && val.length && looksLikeDay(val[0])) return val;
+          if (val && typeof val === "object") next.push(val);
+        }
+      }
+      queue = next;
+    }
+    return null;
+  }
+
+  /* Three recognisable prayer times is enough to call something a day. */
+  function looksLikeDay(obj) {
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return false;
+    var map = flatten(obj);
+    var hits = 0;
+    for (var i = 0; i < SLOTS.length; i++) {
+      if (parseTime(pick(map, SLOTS[i].aliases))) hits++;
+      if (hits >= 3) return true;
+    }
+    return false;
+  }
+
+  /* One record -> { date, hijri, day, zone, times }, or null if unusable. */
   function parseEntry(entry, zone) {
     if (!entry || typeof entry !== "object") return null;
 
-    var ymd = parseJakimDate(entry.date);
-    if (!ymd) return null;
+    var map = flatten(entry);
+    var date = parseDate(pick(map, DATE_ALIASES));
+    if (!date) return null;
 
     var times = {};
     SLOTS.forEach(function (slot) {
-      var t = parseJakimTime(entry[slot.field]);
-      if (t) {
-        times[slot.key] = new Date(ymd.y, ymd.m, ymd.d, t.h, t.m, t.s);
-      }
+      var t = parseTime(pick(map, slot.aliases));
+      if (t) times[slot.key] = new Date(date.y, date.m, date.d, t.h, t.m, t.s);
     });
 
     for (var i = 0; i < REQUIRED.length; i++) {
       if (!times[REQUIRED[i]]) return null;
     }
 
+    var hijri = pick(map, HIJRI_ALIASES);
+    var label = map.day;
+
     return {
-      date: new Date(ymd.y, ymd.m, ymd.d),
-      hijri: typeof entry.hijri === "string" && entry.hijri.trim() ? entry.hijri.trim() : null,
-      day: typeof entry.day === "string" && entry.day.trim() ? entry.day.trim() : null,
+      date: new Date(date.y, date.m, date.d),
+      hijri: typeof hijri === "string" && hijri.trim() ? hijri.trim() : null,
+      day: typeof label === "string" && label.trim() ? label.trim() : null,
       zone: zone || null,
       times: times
     };
@@ -196,26 +324,26 @@ window.JakimAPI = (function () {
   }
 
   /**
-   * Validate an e-Solat payload and return sorted, de-duplicated day records.
-   * Throws when the payload is not a usable e-Solat response.
+   * Validate a payload and return sorted, de-duplicated day records.
+   * Throws when it holds no usable prayer times.
    */
   function normalise(payload) {
-    if (!payload || typeof payload !== "object") {
+    if (!payload || (typeof payload !== "object")) {
       throw new Error("Respons bukan objek JSON yang sah");
     }
 
-    // JAKIM answers "OK!" on success and e.g. "Failed!" on a bad zone.
-    var status = typeof payload.status === "string" ? payload.status.trim() : "";
-    if (status && !/^ok/i.test(status)) {
-      throw new Error("API JAKIM memulangkan status “" + status + "”");
+    // e-Solat reports failure in-band with a 200, so trust `status` when the
+    // payload carries one. solat.my may not; absence is not an error.
+    var status = (payload && typeof payload.status === "string")
+      ? payload.status.trim() : "";
+    if (status && !/^ok/i.test(status) && !/^(true|success|1)$/i.test(status)) {
+      throw new Error("API memulangkan status “" + status + "”");
     }
 
-    var rows = payload.prayerTime;
-    if (!Array.isArray(rows) || !rows.length) {
-      throw new Error("Respons tiada senarai “prayerTime”");
-    }
+    var rows = findList(payload);
+    if (!rows) throw new Error("Tiada senarai waktu solat dalam respons");
 
-    var zone = typeof payload.zone === "string" ? payload.zone.trim() : null;
+    var zone = (payload && typeof payload.zone === "string") ? payload.zone.trim() : null;
 
     var days = [];
     var seen = {};
@@ -223,6 +351,8 @@ window.JakimAPI = (function () {
 
     for (var i = 0; i < rows.length; i++) {
       var rec = parseEntry(rows[i], zone);
+      // A malformed day is dropped, not fatal: losing one day out of a yearly
+      // download is better than losing the year.
       if (!rec) { skipped++; continue; }
 
       var k = dayKey(rec.date);
@@ -262,7 +392,7 @@ window.JakimAPI = (function () {
       try {
         return JSON.parse(text);
       } catch (e) {
-        // e-Solat serves an HTML error page when it is unhappy with a request.
+        // Both upstreams serve an HTML error page when they are unhappy.
         throw new Error("Respons bukan JSON");
       }
     }).finally(function () {
@@ -276,8 +406,8 @@ window.JakimAPI = (function () {
 
   /*
    * One URL, retried on transport failures only. A response that arrives but
-   * does not parse is a real answer and is not worth repeating (myazan draws
-   * the same line between JakimNetworkError and JakimApiError).
+   * does not parse is a real answer and not worth repeating — the same line
+   * myazan draws between JakimNetworkError and JakimApiError.
    */
   function fetchWithRetry(url) {
     var attempt = 0;
@@ -301,19 +431,36 @@ window.JakimAPI = (function () {
     return go();
   }
 
+  /* The upstreams to try, best first. */
+  function plan(zone, year) {
+    return [
+      { via: "solat.my", label: "yearly", url: solatMyUrl(zone, year), period: "year" },
+      { via: "JAKIM",    label: "year",   url: jakimUrl(zone, "year"),  period: "year" },
+      { via: "JAKIM",    label: "month",  url: jakimUrl(zone, "month"), period: "month" },
+      { via: "JAKIM",    label: "today",  url: jakimUrl(zone, "today"), period: "today" }
+    ];
+  }
+
   /**
-   * Resolves to { days, raw, url, zone, period, via }.
+   * Resolves to { days, raw, url, zone, year, via, label }.
    *
    * `days` is sorted ascending; each entry is { date, hijri, day, zone, times }
    * where `times` maps a slot key to a Date on that day.
    */
-  function load(zone) {
+  function load(zone, year) {
+    year = year || new Date().getFullYear();
+
     var custom = customTemplate();
     var attempts = [];
 
-    PERIODS.forEach(function (period) {
-      if (custom) attempts.push({ url: expand(custom, zone, period), period: period, via: "custom" });
-      attempts.push({ url: directUrl(zone, period), period: period, via: "jakim" });
+    plan(zone, year).forEach(function (src) {
+      if (custom) {
+        attempts.push({
+          url: expand(custom, { zone: zone, year: year, period: src.period, url: src.url }),
+          via: "Geganti → " + src.via, label: src.label
+        });
+      }
+      attempts.push({ url: src.url, via: src.via, label: src.label });
     });
 
     var errors = [];
@@ -330,11 +477,11 @@ window.JakimAPI = (function () {
 
       return fetchWithRetry(a.url).then(function (res) {
         return {
-          days: res.days, raw: res.raw,
-          url: a.url, zone: zone, period: a.period, via: a.via
+          days: res.days, raw: res.raw, url: a.url,
+          zone: zone, year: year, via: a.via, label: a.label
         };
       }).catch(function (err) {
-        errors.push(a.period + " (" + a.via + "): " + err.message);
+        errors.push(a.via + " " + a.label + ": " + err.message);
         return next();
       });
     }
@@ -345,12 +492,17 @@ window.JakimAPI = (function () {
   return {
     load: load,
     normalise: normalise,
-    parseJakimDate: parseJakimDate,
-    parseJakimTime: parseJakimTime,
+    parseDate: parseDate,
+    parseTime: parseTime,
     customTemplate: customTemplate,
     setCustomTemplate: setCustomTemplate,
-    directUrl: directUrl,
+    solatMyUrl: solatMyUrl,
+    jakimUrl: jakimUrl,
     SLOTS: SLOTS,
-    BASE: JAKIM_BASE
+    JAKIM_BASE: JAKIM_BASE,
+    SOLATMY_BASE: SOLATMY_BASE
   };
 })();
+
+/* The app referred to this as JakimAPI while e-Solat was the only source. */
+window.JakimAPI = window.SolatAPI;

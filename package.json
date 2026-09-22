@@ -1,0 +1,16 @@
+{
+  "name": "waktu-solat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Malaysian prayer times with scheduled azan playback, for unattended PA systems.",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "serve": "node tools/serve.mjs",
+    "probe": "node tools/probe.mjs",
+    "test": "node tools/parser.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT"
+}

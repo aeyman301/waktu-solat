@@ -125,22 +125,34 @@
     <summary>Sumber data &amp; diagnostik</summary>
 
     <p class="hint">
-      Data diambil terus daripada API rasmi JAKIM e-Solat
-      (<span class="mono">e-solat.gov.my</span>), satu tahun sekali muat turun.
+      Data diambil daripada <span class="mono">solat.my</span>
+      (<span class="mono">/api/yearly/{zone}/{year}</span>), dengan API rasmi
+      JAKIM e-Solat (<span class="mono">e-solat.gov.my</span>) sebagai
+      sandaran. Satu tahun sekali muat turun.
     </p>
 
     <p class="hint">
-      Jika pelayar menyekat permintaan itu kerana CORS, masukkan URL geganti
-      (<i>relay</i>) anda sendiri di bawah — ia akan dicuba dahulu. Gunakan
-      <span class="mono">{url}</span> untuk keseluruhan URL JAKIM yang telah
-      dienkod, atau <span class="mono">{zone}</span> dan
-      <span class="mono">{period}</span> jika geganti anda membina URL sendiri.
+      Kedua-duanya tidak menghantar pengepala CORS, jadi pelayar mungkin
+      menyekat bacaan terus. Jalankan <span class="mono">npm start</span> dan
+      masukkan laluan geganti di bawah — ia dicuba dahulu:
+    </p>
+
+    <p class="hint">
+      <span class="mono">/api/solat?zone={zone}&amp;year={year}</span><br>
+      <span class="mono">/api/jakim?zone={zone}&amp;period={period}</span>
+    </p>
+
+    <p class="hint">
+      Untuk geganti lain, gunakan <span class="mono">{url}</span> bagi
+      keseluruhan URL hulu yang telah dienkod, atau
+      <span class="mono">{zone}</span>, <span class="mono">{year}</span> dan
+      <span class="mono">{period}</span>.
     </p>
 
     <label class="field field-wide">
       <span class="field-label">URL geganti (pilihan)</span>
       <input type="text" id="apiUrl" class="text-input" spellcheck="false"
-             placeholder="https://contoh-geganti-anda/ambil?url={url}">
+             placeholder="/api/solat?zone={zone}&amp;year={year}">
     </label>
 
     <div class="btn-row">
@@ -154,7 +166,7 @@
 </main>
 
 <footer class="footer">
-  <p>Data: <a href="https://www.e-solat.gov.my/" target="_blank" rel="noopener noreferrer">JAKIM e-Solat</a> · API rasmi <span class="mono">esolatApi/takwimsolat</span>.</p>
+  <p>Data: <a href="https://solat.my/" target="_blank" rel="noopener noreferrer">solat.my</a> · sandaran <a href="https://www.e-solat.gov.my/" target="_blank" rel="noopener noreferrer">JAKIM e-Solat</a>. Kedua-duanya bersumberkan takwim JAKIM.</p>
   <p class="hint">Sahkan waktu dengan masjid berhampiran sebelum bergantung sepenuhnya.</p>
 </footer>
 
