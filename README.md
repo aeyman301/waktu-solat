@@ -53,6 +53,8 @@ serve it as-is.
 ## Features
 
 - Zone picker covering all 60 JAKIM zones (JHR01 … WLY02), remembered between visits.
+- **Search by town** — type `Sitiawan` and the zone resolves to PRK05, so nobody
+  has to know their zone code to commission the thing.
 - Live clock, next-prayer countdown, and a progress bar for the current interval.
 - Azan plays automatically at Subuh, Zohor, Asar, Maghrib and Isyak, each of
   which can be switched off individually.
@@ -154,11 +156,57 @@ announces over its speakers.
 index.html        markup
 css/styles.css    styling, light and dark
 js/zones.js       JAKIM zone codes by state (all 60)
+js/locations.js   town -> zone, for the search box
 js/api.js         JAKIM e-Solat client: fetch, retry, validate, normalise
 js/audio.js       azan playback and autoplay unlocking
 js/app.js         rendering, countdown, azan scheduler
 audio/azan.mp3    your recording (not included)
 ```
+
+## Finding a zone
+
+A JAKIM zone code is not something anyone knows offhand, but the town is, so the
+top bar takes a place name:
+
+```
+Sitiawan          -> PRK05
+kota kinabalu     -> SBH07     (case does not matter)
+Seremb            -> NGS03     (unambiguous prefixes work)
+TRG04             -> TRG04     (a code typed straight in)
+```
+
+The list of towns is `js/locations.js`, built from
+[`waktu.solat.my/api/locations`](https://waktu.solat.my/api/locations) and
+bundled as a static file — it changes about as often as district boundaries do,
+and the page should not need a second network dependency to populate a dropdown.
+
+A town that maps to more than one zone is not guessed at. There is a Terusan in
+both Sabah (SBH02) and Sarawak (SWK01), so typing `Terusan` alone changes
+nothing; pick `Terusan — SWK01` from the suggestions instead. Every suggestion
+carries its zone code for that reason.
+
+### A discrepancy worth knowing about
+
+The two sources used here disagree about **Rompin, Pahang**:
+
+| Source | Says |
+| --- | --- |
+| myazan v0.2.0 (`006_fix_zone_seeder.sql`) | `PHG07` — Rompin, Endau, Pontian |
+| `waktu.solat.my/api/locations` | Rompin is in `PHG02`, and no `PHG07` exists |
+
+`PHG07` is currently kept in `js/zones.js` and the town search sends Rompin to
+`PHG02`, which is the conservative pairing — nobody lands on a zone that might
+not exist unless they pick it deliberately. **This has not been confirmed
+against JAKIM.** Opening
+
+```
+https://www.e-solat.gov.my/index.php?r=esolatApi/takwimsolat&period=today&zone=PHG07
+```
+
+settles it: prayer times back means `PHG07` is real and Rompin's entry in the
+town search should move to it; a non-OK status means `PHG07` should come out of
+the zone list. If you run a PA system anywhere near Rompin, check this before
+trusting the schedule.
 
 ## Operating notes
 

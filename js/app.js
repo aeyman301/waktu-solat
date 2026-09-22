@@ -132,7 +132,7 @@
 
   function cacheDom() {
     [
-      "zoneSelect", "zoneLabel", "refreshBtn", "audioBanner", "enableAudioBtn",
+      "zoneSelect", "townSearch", "townList", "zoneLabel", "refreshBtn", "audioBanner", "enableAudioBtn",
       "errorBox", "errorTitle", "errorMsg", "dismissErrorBtn", "clock", "gregDate",
       "hijriDate", "nextName", "nextTime", "countdown", "progressFill", "timeGrid",
       "sourceBadge", "azanEnabled", "volume", "volumeOut", "prayerToggles",
@@ -157,6 +157,48 @@
     });
     el.zoneSelect.appendChild(frag);
     el.zoneSelect.value = state.zone;
+  }
+
+  /*
+   * The datalist carries the zone code in the option text, so a town that JAKIM
+   * splits across states — there is a Terusan in both Sabah and Sarawak — stays
+   * unambiguous, and a code typed straight in still resolves.
+   */
+  function buildTownSearch() {
+    var frag = document.createDocumentFragment();
+    window.LOCATION_INDEX.forEach(function (loc) {
+      var opt = document.createElement("option");
+      opt.value = loc.town + " \u2014 " + loc.code;
+      opt.label = loc.state;
+      frag.appendChild(opt);
+    });
+    el.townList.appendChild(frag);
+  }
+
+  /* Accepts "Sitiawan — PRK05", a bare town name, or a bare zone code. */
+  function zoneFromSearch(text) {
+    var raw = String(text || "").trim();
+    if (!raw) return null;
+
+    var tail = raw.match(/([A-Za-z]{3}\s?\d{2})\s*$/);
+    if (tail) {
+      var code = tail[1].replace(/\s/g, "").toUpperCase();
+      if (window.ZONE_INDEX[code]) return code;
+    }
+
+    var name = raw.replace(/\s*\u2014.*$/, "").trim().toLowerCase();
+    if (!name) return null;
+
+    var exact = window.LOCATION_INDEX.filter(function (l) {
+      return l.town.toLowerCase() === name;
+    });
+    if (exact.length === 1) return exact[0].code;
+    if (exact.length > 1) return null; // ambiguous: let them pick from the list
+
+    var starts = window.LOCATION_INDEX.filter(function (l) {
+      return l.town.toLowerCase().indexOf(name) === 0;
+    });
+    return starts.length === 1 ? starts[0].code : null;
   }
 
   function buildPrayerToggles() {
@@ -223,14 +265,36 @@
     }
   }
 
+  function applyZoneChange(zone) {
+    state.zone = zone;
+    el.zoneSelect.value = zone;
+    write(STORE.zone, zone);
+    // A new zone means a different schedule; let today's azan fire again.
+    state.fired = { date: dayKey(new Date()), keys: [] };
+    write(STORE.fired, JSON.stringify(state.fired));
+    loadData({ preferCache: true });
+  }
+
   function bindEvents() {
+    el.townSearch.addEventListener("change", function () {
+      var zone = zoneFromSearch(el.townSearch.value);
+      if (zone) {
+        applyZoneChange(zone);
+        el.townSearch.setCustomValidity("");
+      } else if (el.townSearch.value.trim()) {
+        el.townSearch.setCustomValidity("Bandar tidak dikenali");
+        el.townSearch.reportValidity();
+      }
+    });
+
+    el.townSearch.addEventListener("input", function () {
+      el.townSearch.setCustomValidity("");
+    });
+
     el.zoneSelect.addEventListener("change", function () {
-      state.zone = el.zoneSelect.value;
-      write(STORE.zone, state.zone);
-      // A new zone means a different schedule; let today's azan fire again.
-      state.fired = { date: dayKey(new Date()), keys: [] };
-      write(STORE.fired, JSON.stringify(state.fired));
-      loadData({ preferCache: true });
+      // The town box would otherwise still name a place in the previous zone.
+      el.townSearch.value = "";
+      applyZoneChange(el.zoneSelect.value);
     });
 
     el.refreshBtn.addEventListener("click", function () { loadData(); });
@@ -656,6 +720,7 @@
 
     loadSettings();
     buildZoneSelect();
+    buildTownSearch();
     buildPrayerToggles();
     bindEvents();
 

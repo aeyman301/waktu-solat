@@ -34,6 +34,11 @@ window.ZONES = [
     ["PHG04", "Bentong, Lipis, Raub"],
     ["PHG05", "Genting Sempah, Janda Baik, Bukit Tinggi"],
     ["PHG06", "Cameron Highlands, Genting Highlands, Bukit Fraser"],
+    // Unconfirmed: myazan's JAKIM dump lists PHG07, but waktu.solat.my's
+    // location index has no such zone and files Rompin under PHG02. Kept
+    // because a missing zone cannot be chosen at all, while a spurious one is
+    // visible the moment it is picked. See README, "A discrepancy worth
+    // knowing about".
     ["PHG07", "Rompin (Mukim Rompin, Endau, Pontian)"]
   ]},
   { state: "Perak", zones: [
