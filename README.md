@@ -45,7 +45,17 @@ python3 -m http.server 8000
 
 Opening `index.html` straight off disk mostly works, but a local server is
 better: `file://` pages are treated as an opaque origin, so the request to
-e-Solat is more likely to be blocked. See **CORS** below.
+e-Solat is more likely to be blocked.
+
+If the schedule does not load, the cause is almost always CORS — use
+`tools/serve.py` instead, which serves the page and the JAKIM data from one
+origin:
+
+```sh
+python3 tools/serve.py
+```
+
+See **CORS, and how to get past it** below.
 
 It is plain static files, so GitHub Pages, Netlify, Vercel or any web host will
 serve it as-is.
@@ -123,45 +133,89 @@ in myazan; a response that arrives but does not validate is not retried.
 A malformed day is skipped rather than failing the whole download — losing one
 day out of a year is better than losing the year.
 
-### CORS
+### CORS, and how to get past it
 
-This is the one thing to check before deploying. e-Solat is a government host
-and makes no promise about `Access-Control-Allow-Origin`, so a browser on
-another origin may be refused the response even though the request itself
-succeeds. Open **Sumber data & diagnostik** at the bottom of the page: it shows
-which URL answered and the raw JSON.
+e-Solat sends no `Access-Control-Allow-Origin` header, so a browser will refuse
+to let a page on another origin read the response. The request itself succeeds
+— you can open the URL in a tab and see the JSON — but a `fetch` from the page
+is blocked. You will see **Tiada data** above the schedule and
+`Failed to fetch` in **Sumber data & diagnostik**.
 
-If the browser blocks the direct call, put your own relay in the field there. It
-is tried **before** the direct call, and is saved locally. Placeholders:
+Nothing written in the page can fix this. The check is the browser's and the
+missing header is the server's, so the only real fix is to stop making it a
+cross-origin request: **serve the schedule from the same host that serves the
+page.**
 
-| Placeholder | Becomes |
-| --- | --- |
-| `{url}` | the whole JAKIM URL, percent-encoded |
-| `{zone}` | the zone code, e.g. `WLY01` |
-| `{period}` | `year`, `month` or `today` |
+#### The short way
+
+```sh
+python3 tools/serve.py
+# serving /path/to/waktu-solat on http://0.0.0.0:8000
+# relay at /api/jakim?zone={zone}&period={period}
+```
+
+Open the page, expand **Sumber data & diagnostik**, and put this in the relay
+field:
 
 ```
-https://your-relay.example/fetch?url={url}
+/api/jakim?zone={zone}&period={period}
 ```
 
-A relay is a few lines in front of your own web server — it just has to forward
-the request and add the CORS header. Serving the page and the relay from the
-same origin avoids the problem entirely. Think twice before pointing this at a
-public CORS proxy: it puts a third party in the path of what your site
-announces over its speakers.
+Press **Simpan & muat semula**. The badge should turn to **JAKIM · 365 hari**.
 
-## Layout
+`tools/serve.py` is the standard library only — the same thing as
+`python3 -m http.server`, plus one extra route that fetches e-Solat server-side
+and hands the bytes back from the page's own origin. Server-to-server requests
+have no CORS to answer to.
 
+It is not a general proxy: the zone must match `^[A-Z]{3}[0-9]{2}$` and the
+period must be one JAKIM recognises, and the upstream URL is rebuilt from those
+two values, so a crafted request cannot point it anywhere else.
+
+#### If you already run a web server
+
+Put the relay on the same hostname as the page and the effect is identical. The
+relative path `/api/jakim?zone={zone}&period={period}` goes in the relay field
+either way. These two are **sketches — they have not been tested here**, unlike
+`tools/serve.py` above; check them against your own setup.
+
+nginx:
+
+```nginx
+location /api/jakim {
+    resolver 1.1.1.1 ipv6=off;
+    set $esolat "https://www.e-solat.gov.my/index.php?r=esolatApi/takwimsolat&period=$arg_period&zone=$arg_zone";
+    proxy_pass $esolat;
+    proxy_ssl_server_name on;
+    proxy_set_header Host www.e-solat.gov.my;
+}
 ```
-index.html        markup
-css/styles.css    styling, light and dark
-js/zones.js       JAKIM zone codes by state (all 60)
-js/locations.js   town -> zone, for the search box
-js/api.js         JAKIM e-Solat client: fetch, retry, validate, normalise
-js/audio.js       azan playback and autoplay unlocking
-js/app.js         rendering, countdown, azan scheduler
-audio/azan.mp3    your recording (not included)
+
+Caddy:
+
+```caddy
+handle /api/jakim* {
+    rewrite * /index.php?r=esolatApi/takwimsolat&period={query.period}&zone={query.zone}
+    reverse_proxy https://www.e-solat.gov.my {
+        header_up Host www.e-solat.gov.my
+    }
+}
 ```
+
+Neither validates `zone` and `period` the way `tools/serve.py` does, so do not
+expose either to the open internet without adding that.
+
+#### What not to do
+
+A public CORS proxy will work, and it puts a stranger in the path of what your
+site announces over its loudspeakers — they can see every request, and a bad
+day for them is a silent day for you. The year-long cache means an outage is
+survivable, but the schedule is still coming from somebody you have no
+agreement with. For a PA installation, run your own relay.
+
+There is no `--disable-web-security` option worth taking here either: it turns
+the check off for every site that browser visits, on a machine that is meant to
+sit unattended.
 
 ## Finding a zone
 
@@ -226,6 +280,12 @@ For an unattended PA installation, the things that actually bite:
   keep it on NTP and in the correct timezone.
 - **Volume is set in the page, not just the amplifier.** The slider persists
   between visits; confirm both it and the amp gain after any maintenance.
+- **The relay is part of the installation.** If you fixed CORS with
+  `tools/serve.py` or a proxy in your web server, that process has to be
+  running for the page to refresh — put it behind systemd, or whatever keeps
+  services up on that box, rather than a terminal someone can close. The cached
+  year means a stopped relay is not noticed for months, which is exactly why it
+  should be supervised.
 - **The cached year runs out.** The page refreshes itself and will pick up the
   next year on its own while it has a connection. A machine that has been
   offline across 1 January has no times for the new year: the badge above the
