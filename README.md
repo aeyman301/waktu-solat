@@ -5,6 +5,22 @@ Malaysian zones and plays the azan at prayer time. Built with plain C#/.NET
 Framework 4.x — no Visual Studio, no NuGet, no runtime dependencies beyond the
 .NET Framework 4 that Windows 7 SP1 can install.
 
+## Intended use
+
+**This is built for automated announcer and PA systems** — factories,
+warehouses, plants, offices, facilities and similar sites where a machine drives
+the loudspeakers on a fixed schedule and nobody is watching a screen.
+
+It is meant to run unattended on a dedicated machine: the app starts minimized
+to the tray (optionally with Windows), keeps an offline cache of the prayer
+schedule, and plays the azan through the machine's audio output at each prayer
+time — wire that output into the PA amplifier.
+
+It is not a personal prayer-times app, and it is not a substitute for a
+muazzin. Before commissioning it on a real system, treat it as plant equipment:
+verify the zone, the azan sound files, the volume and the output routing on
+site before leaving it running.
+
 ## API used (JAKIM via waktusolat.app)
 
 ```
